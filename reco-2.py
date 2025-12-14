@@ -211,6 +211,7 @@ def add_bg_from_local(image_file):
                 background-color: rgba(0, 0, 0, 0.4); /* 40% d'opacité noire */
                 z-index: -1; 
             }}
+
             </style>
             """,
             unsafe_allow_html=True
