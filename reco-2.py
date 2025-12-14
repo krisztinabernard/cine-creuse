@@ -1,7 +1,6 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-import gdown
 import pandas as pd
 
 
@@ -16,7 +15,7 @@ from sklearn.model_selection import train_test_split
 from sklearn.neighbors import NearestNeighbors
 
 # Import outil standardisation de la donnée
-from sklearn.preprocessing import StandardScaler, MinMaxScaler
+from sklearn.preprocessing import StandardScaler, MinMaxScaler, OneHotEncoder
 from sklearn.compose import ColumnTransformer
 
 # Import pipeline
@@ -34,36 +33,30 @@ import base64
 @st.cache_data(show_spinner=True) # Affiche un message de chargement une seule fois
 def load_data_and_preprocess():
     # import du csv data_ml
-    file = "1h6zW1eKmDVZCJ2d2prtjVV0HqxlPMGP9"
-    gdown.download(f"https://drive.google.com/uc?id={file}", "data_ml.csv", quiet=False)
     df = pd.read_csv("data_ml.csv")
 
-
-    # supprimer les films avec valeurs nulles dans Date de création et genres
-    # ne garder que les films avec minimum 500 votes et une note de plus de 1 (exclut les Nan en même temps) 
-    df = df.dropna(subset=['Date de création','genres'])
-    df_noted = df[(df['Note moyenne'] > 1.0) & (df['numVotes']>500)].copy()
-
-    df_noted['Date de création'] = df_noted['Date de création'].astype(int)
-
-    df_noted['Titre originale LC'] = df_noted['Titre originale'].str.lower()
-    df_noted['titre_FR_LC'] = df_noted['titre_FR'].str.lower()
+    # créer 
+    df['Date de création'] = df['Date de création'].astype(int)
+    df['Titre originale LC'] = df['Titre originale'].str.lower()
+    df['titre_FR_LC'] = df['titre_FR'].str.lower()
 
     # créer un nouvelle colonne note_ponderee qui permettra de trier les voisins
-    C = df_noted['Note moyenne'].mean()
-    m = df_noted['numVotes'].quantile(0.5) # pour les films en-dessous de m (environ 1800), la note sera tiré vers la moyenne
+    C = df['Note moyenne'].mean()
+    m = df['numVotes'].quantile(0.5) # pour les films en-dessous de m (environ 1156), la note sera tiré vers la moyenne
 
-    df_noted['Note_ponderee'] = (
-        (df_noted['numVotes'] / (df_noted['numVotes'] + m)) * df_noted['Note moyenne']
-        + (m / (df_noted['numVotes'] + m)) * C
+    df['Note_ponderee'] = (
+        (df['numVotes'] / (df['numVotes'] + m)) * df['Note moyenne']
+        + (m / (df['numVotes'] + m)) * C
     )
 
+    df = df.dropna(subset=['langue_originale'])
+
     # features
-    X = df_noted[['Action','Adventure','Animation','Biography','Comedy','Crime',
+    X = df[['Action','Adventure','Animation','Biography','Comedy','Crime',
                     'Documentary','Drama','Family','Fantasy','Film-Noir', 'History','Horror',
-                    'Music','Musical','Mystery','News', 'Romance','Sci-Fi','Short','Sport',
-                    'Thriller','War','Western','Date de création']]
-    return df_noted, X
+                    'Music','Musical','Mystery','News', 'Romance','Sci-Fi','Sport',
+                    'Thriller','War','Western','Date de création','langue_originale']]
+    return df, X
 
 # Cache du pipeline
 @st.cache_resource(show_spinner=True)
@@ -71,8 +64,9 @@ def create_and_fit_pipeline(X):
     num_features = ['Date de création']
     bin_features = ['Action','Adventure','Animation','Biography','Comedy','Crime',
                     'Documentary','Drama','Family','Fantasy','Film-Noir', 'History','Horror',
-                    'Music','Musical','Mystery','News', 'Romance','Sci-Fi','Short','Sport',
+                    'Music','Musical','Mystery','News', 'Romance','Sci-Fi','Sport',
                     'Thriller','War','Western']
+    cat_features = ['langue_originale']
 
 
     # standardiser les colonnes 
@@ -80,6 +74,7 @@ def create_and_fit_pipeline(X):
     preprocessor = ColumnTransformer(
         transformers=[
             ('num',MinMaxScaler(), num_features),
+            ('cat',OneHotEncoder(), cat_features),
             ('bin','passthrough', bin_features)
         ]
     )
@@ -98,7 +93,7 @@ def create_and_fit_pipeline(X):
     return pipeline
 
 st.set_page_config(
-    page_title="Recommendation de films",
+    page_title="CinéMatch 23",
     initial_sidebar_state="expanded"
 )
 
@@ -224,7 +219,7 @@ def add_bg_from_local(image_file):
 
 add_bg_from_local('img/bg.png')
 
-df_noted, X = load_data_and_preprocess()
+df, X = load_data_and_preprocess()
 pipeline = create_and_fit_pipeline(X)
 
 def recommander_film(titre, n=10):
@@ -232,10 +227,10 @@ def recommander_film(titre, n=10):
     # passer le titre cible en minuscule
     titre = titre.lower()
     
-    # trouver le film dans le df_noted : chercher d'abord dans les titres FR LC, et si non trouve, dans titre originale
-    film_row = df_noted[
-        (df_noted['titre_FR_LC'] == titre) | 
-        (df_noted['Titre originale LC'] == titre)]
+    # trouver le film dans le df : chercher d'abord dans les titres FR LC et dans titre originale LC
+    film_row = df[
+        (df['titre_FR_LC'] == titre) | 
+        (df['Titre originale LC'] == titre)]
     
     if film_row.empty:
         st.error(f"Le film **'{titre}'** n'est pas connu dans notre outil de recommandation")
@@ -253,12 +248,12 @@ def recommander_film(titre, n=10):
         n_neighbors=50
     )
 
-    # Les indices renvoyés par nn_model sont des indices positionnels dans X_scaled/df_noted
-    # utiliser .iloc sur df_noted pour récupérer les lignes correspondantes
+    # Les indices renvoyés par nn_model sont des indices positionnels dans X_scaled/df
+    # utiliser .iloc sur df pour récupérer les lignes correspondantes
     indices = indices[0]
     
     # récupérer les données complètes des films trouvés
-    recos = df_noted.iloc[indices][['Titre originale', 'genres', 'Date de création', 'Note moyenne',"numVotes", 'Note_ponderee', 'directeur_name','Titre originale LC','titre_FR','langue_originale','chemin_affiche','description', 'Durée (Min)']]
+    recos = df.iloc[indices][['Titre originale', 'genres', 'Date de création', 'Note moyenne',"numVotes", 'Note_ponderee', 'directeur_name', 'actor1_name', 'actor2_name','Titre originale LC','titre_FR','langue_originale','chemin_affiche','description', 'Durée (Min)']]
 
 
     # exclure explicitement le film cible par titre ou index
@@ -269,10 +264,10 @@ def recommander_film(titre, n=10):
     recos_triées = recos.sort_values(by='Note_ponderee', ascending=False)
 
     # retourner le top 10
-    return recos_triées[['Titre originale', 'genres', 'Date de création', 'Note moyenne', 'numVotes','directeur_name', 'titre_FR','langue_originale','chemin_affiche','description', 'Durée (Min)']].head(n)
+    return recos_triées[['Titre originale', 'genres', 'Date de création', 'Note moyenne', 'numVotes','directeur_name', 'actor1_name', 'actor2_name', 'titre_FR','langue_originale','chemin_affiche','description', 'Durée (Min)']].head(n)
 
 
-st.title("Recommendation de films")
+st.title("CinéMatch 23")
 
 st.header("Quel est votre film favori ?")
 
@@ -288,63 +283,79 @@ if submit_form:
     if resultat is not None:
         st.subheader(f"Top {len(resultat)} des films similaires à **{titre.title()}** :")
         
-        # Le nombre de colonnes
-        COLUMNS_PER_ROW = 3 
-        
-        # Pour itérer sur les résultats et créer les lignes de colonnes
-        for i in range(0, len(resultat), COLUMNS_PER_ROW):
-            # Créer une ligne de 3 colonnes pour les films i, i+1, i+2
-            cols = st.columns(COLUMNS_PER_ROW)
+        for index, row in resultat.iterrows():
             
-            # Traiter les films de cette ligne
-            for j in range(COLUMNS_PER_ROW):
-                if i + j < len(resultat):
-                    row = resultat.iloc[i + j]
+            # --- EN-TÊTE DE L'ENCART (Affiché quand fermé) ---
+            
+            # Formate numVotes en entier avec séparateur de milliers
+            votes_format = f"({int(row['numVotes']):,} votes)"
+            note_format = f"{row['Note moyenne']:.1f}/10"
+            annee_format = f"[{row['Date de création']}]"
+            
+            header_title = (
+                f"⭐ **{row['Titre originale']}** {annee_format} | "
+                f"Note : {note_format} {votes_format}"
+            )
+            
+            with st.expander(header_title):
+                
+                # --- 🔍 CONTENU DÉTAILLÉ (Affiché quand ouvert) ---
+                
+                # Crée deux colonnes : 1 pour l'image (33%), 2 pour les détails (66%)
+                poster_col, info_col = st.columns([1, 2])
+
+                # ===============================================
+                # 1. Colonne de l'AFFICHE (Gauche)
+                # ===============================================
+                with poster_col:
+                    chemin_affiche = row['chemin_affiche']
                     
-                    # Utiliser l'index de la colonne pour placer la carte
-                    with cols[j]:
-                        
-                        # --- DÉBUT DE LA CARTE DE FILM ---
-                        # Utiliser un conteneur pour simuler la "carte" et appliquer un fond
-                        with st.container(border=True): 
-                            
-                            # 1. AFFICHE
-                            chemin_affiche = row['chemin_affiche']
-                            if pd.notna(chemin_affiche):
-                                url_affiche = f"https://image.tmdb.org/t/p/w500{chemin_affiche}"
-                            else:
-                                url_affiche = "https://via.placeholder.com/200x300.png?text=Aucune+affiche"
-                            
-            
-                            st.image(url_affiche, width=180) # Réduire la taille de l'image pour les cartes
-                            
-                            
-                            # 2. INFORMATIONS CLÉS
-                            # H4 pour le titre pour qu'il ne prenne pas trop de place
-                            st.markdown(f"**{row['Titre originale']}**") 
+                    if pd.notna(chemin_affiche):
+                        url_affiche = f"https://image.tmdb.org/t/p/w500{chemin_affiche}"
+                    else:
+                        url_affiche = "https://via.placeholder.com/200x300.png?text=Aucune+affiche"
+                    
+                    st.image(
+                        url_affiche, 
+                        #caption=row['Titre originale'], 
+                        width=200 # Taille fixe pour alignement
+                    )
 
-                            # Note et Année
-                            note_format = f"{row['Note moyenne']:.1f}/10"
-                            annee_format = f"({row['Date de création']})"
-                            
-                            st.markdown(f"⭐ **Note :** {note_format} {annee_format}")
-                            
-                            # Genres
-                            st.markdown(f"**Genres :** {row['genres'].split(',')[0]}...") # Afficher juste le premier genre pour la concision
+                # ===============================================
+                # 2. Colonne des INFORMATIONS (Droite)
+                # ===============================================
+                with info_col:
+                    st.subheader(row['Titre originale'])
+                
+                    st.markdown(f"**Directeur :** {row['directeur_name']}")
+                    
+                    if pd.notna(row['actor1_name']):
+                        if row['actor1_name'] == row['actor2_name'] :
+                            st.markdown(f"**Avec :** {row['actor1_name']}")
+                        else :
+                            st.markdown(f"**Avec :** {row['actor1_name']}, {row['actor2_name']}")
+                    
+                    if pd.notna(row['titre_FR']):
+                        st.markdown(f"**Titre Français :** {row['titre_FR']}")
+                    
+                    st.markdown(f"**Genres :** {row['genres']}")
 
-                            # 3. BOUTON DÉTAILS (Simuler un Expand/Popup)
-                            # On utilise un expander DANS la carte pour afficher le reste des infos
-                            with st.expander("Voir les détails"):
-                                if pd.notna(row['titre_FR']):
-                                    st.markdown(f"**Titre Français :** {row['titre_FR']}")
-                                
-                                st.markdown(f"**Directeur :** {row['directeur_name']}")
-                                
-                                if pd.notna(row['Durée (Min)']) and row['Durée (Min)'] > 0:
-                                    st.markdown(f"**Durée :** {int(row['Durée (Min)'])} min")
-                                
-                                if pd.notna(row['description']):
-                                    st.markdown(f"**Synopsis : **")
-                                    st.caption(row['description'][:150] + "...") # Aperçu de la description
-                                
-                        # --- FIN DE LA CARTE DE FILM ---
+                
+                    if pd.notna(row['Durée (Min)']) and row['Durée (Min)'] > 0:
+                        st.markdown(f"**Durée :** {int(row['Durée (Min)'])} min")
+                    else:
+                        st.markdown(f"**Durée :** N/A")
+                                  
+               
+                    if pd.notna(row['langue_originale']):
+                        st.markdown(f"**Langue originale :** {row['langue_originale'].upper()}")
+                   
+
+                # ===============================================
+                # 3. DESCRIPTION (Pleine largeur, sous l'image et les infos)
+                # ===============================================
+                if pd.notna(row['description']):
+                    st.markdown("### Synopsis :")
+                    st.info(row['description'])
+                
+        # --- Fin de la boucle ---
